@@ -1,0 +1,210 @@
+// See https://aka.ms/new-console-template for more information
+using System.CommandLine;
+var bundleCommand = new Command("bundle", "bundle code files to a single file");
+var languageOption = new Option<string[]>("--languages", "languges extensions to bundle");
+languageOption.AllowMultipleArgumentsPerToken = true;
+languageOption.IsRequired = true;
+languageOption.AddAlias("-l");
+languageOption.AddValidator(o =>
+{
+    foreach (var child in o.Children)
+    {
+        if (child.ToString().Contains('.'))
+        {
+            Console.WriteLine("You should write the extension without character '.'");
+            throw new Exception();
+        }
+    }
+});
+var outputOption = new Option<FileInfo>("--output", "output file");
+outputOption.SetDefaultValue(new FileInfo("output.txt"));
+outputOption.AddAlias("-o");
+outputOption.AddValidator(o =>
+{
+    var files = Directory.EnumerateFiles(Directory.GetCurrentDirectory());
+    foreach (var file in files)
+    {
+        if (Path.GetFileName(file) == Path.GetFileName(o.GetValueOrDefault().ToString()))
+        {
+            if (o.IsImplicit)
+            {
+                Console.WriteLine("The system created default name to output file, but this name is already exist,");
+                Console.WriteLine("If do you want to enter other name please stop the program");
+                Console.WriteLine("If do you want to continue press any key");
+                var key = Console.ReadKey();
+            }
+            Console.WriteLine($"this file name {Path.GetFileName(o.GetValueOrDefault().ToString())} already exsist");
+            Console.WriteLine("Do you want to overwrite it? <y/n> ");
+            if (Console.ReadLine() != "y")
+                throw new Exception();
+            break;
+        }
+    }
+});
+var noteOption = new Option<bool>("--note", "write the source of the files");
+noteOption.AddAlias("-n");
+var sortOption = new Option<bool>("--sort", "how to sort the files in the bundle file. The default is alphabetical ");
+sortOption.AddAlias("-s");
+var removeEmptyLinesOption = new Option<bool>("--remove-empty-lines");
+removeEmptyLinesOption.AddAlias("-r");
+var authorOption = new Option<string>("--author", "write the author of this file");
+authorOption.AddAlias("-a");
+bundleCommand.AddOption(languageOption);
+bundleCommand.AddOption(outputOption);
+bundleCommand.AddOption(noteOption);
+bundleCommand.AddOption(sortOption);
+bundleCommand.AddOption(removeEmptyLinesOption);
+bundleCommand.AddOption(authorOption);
+List<string> unusedFiles = new List<string>() { ".angular", ".vscode", ".git", ".vs", "bin", "obj", "node_modules", "publish", ".json" };
+List<string> languages = new List<string>() { "ts", "cs", "html", "js", "scss", "css", "c", "cpp", "java", "py" };
+bundleCommand.SetHandler<FileInfo, string[], bool, bool, bool, string>((output, langs, note, sort, remove, author) =>
+{
+    if (langs.Length == 1 && langs[0] == "all")
+        langs = languages.ToArray();
+    var directory = Directory.GetCurrentDirectory();//ניתוב נוכחי
+    List<string> allFiles = new List<string>();//מערך שיכיל את כל הקבצים להעתקה
+    var files = Directory.EnumerateFiles(directory);//קבצים בניתוב הנוכחי
+    allFiles.AddRange(files.Where(x =>
+    files.Select(x => Path.GetFileName(x)).Except(unusedFiles)
+    .Contains(Path.GetFileName(x))));
+    var folders = Directory.EnumerateDirectories(directory);//תיקיות בניתוב הנוכחי
+    folders = folders.Where(x =>
+    folders.Select(x => Path.GetFileName(x)).Except(unusedFiles)
+    .Contains(Path.GetFileName(x))).ToList();
+    GetAllFiles(allFiles, folders, unusedFiles);
+    if (sort)
+        allFiles = allFiles.OrderBy(x => Path.GetExtension(x)).ToList();
+    else
+        allFiles = allFiles.OrderBy(x => Path.GetFileName(x)).ToList();
+    try
+    {
+        using (var writer = new StreamWriter(output.FullName))
+        {
+            if (author is not null)
+            {
+                writer.WriteLine("# " + author);
+                writer.WriteLine();
+            }
+            foreach (var file in allFiles)
+            {
+                if (langs.Any(l => "." + l == Path.GetExtension(file)))
+                {
+                    using (var reader = new StreamReader(file))
+                    {
+                        string line;
+                        bool isEmpty = true;
+                        while ((line = reader.ReadLine()) != null)
+                            if (!(remove && line == ""))
+                            {
+                                writer.WriteLine(line);
+                                isEmpty = false;
+                            }
+                        writer.WriteLine();
+                        if (note && !isEmpty)
+                        {
+                            writer.WriteLine("code source (relative routing) /** " + Path.GetRelativePath(directory, file) + " **/");
+                            writer.WriteLine();
+                        }
+                        writer.WriteLine();
+                    }
+                }
+            }
+        }
+    }
+    catch (DirectoryNotFoundException e)
+    {
+        Console.WriteLine("ERROR: the directory is invalid");
+        Console.WriteLine(e.Message);
+    }
+    catch (IOException e)
+    {
+        Console.WriteLine("ERROR: error ocourred opening file");
+    }
+}, outputOption, languageOption, noteOption, sortOption, removeEmptyLinesOption, authorOption);
+//rsp command
+var rspCommand = new Command("create-rsp", "create a response file");
+rspCommand.SetHandler(() =>
+{
+    Console.WriteLine("Enter the following details:");
+    Console.Write("Output file (without extension) -> ");
+    var output = Console.ReadLine();
+    Console.Write("Desired languages -> ");
+    var languages = Console.ReadLine();
+    Console.Write("Add note option? <y/n> -> ");
+    var note = Console.ReadLine();
+    Console.Write("Sort by extension files? <y/n> -> ");
+    var sort = Console.ReadLine();
+    Console.Write("Remove empty lines? <y/n> -> ");
+    var remove = Console.ReadLine();
+    Console.Write("Author -> ");
+    var author = Console.ReadLine();
+    Console.Write("Response file name -> ");
+    var name = Console.ReadLine();
+    Console.Write("If you want to add comments to the response file add them here ->");
+    var comments = Console.ReadLine();
+    var directory = Directory.GetCurrentDirectory();
+    name = FindNameToResponseFile(name, directory, "response-file", ".rsp");
+    var path = Path.Combine(directory, name);
+    using (var writer = new StreamWriter(path))
+    {
+        if (comments != null && comments != "")
+            writer.WriteLine("# " + comments);
+        writer.Write($"bondle -o {output} -l {languages} ");
+        if (note == "y")
+            writer.Write("-n ");
+        if (sort == "y")
+            writer.Write("-s ");
+        if (remove == "y")
+            writer.Write("-r ");
+        if (author != null && author != "")
+            writer.Write("-a " + author);
+    }
+});
+var root = new RootCommand("root command");
+root.AddCommand(bundleCommand);
+root.AddCommand(rspCommand);
+root.InvokeAsync(args);
+static string FindNameToResponseFile(string name, string path, string defaultName, string extension)
+{
+    var files = Directory.EnumerateFiles(path);
+    if (name == null || name == "")
+        name = defaultName;
+    bool isGoodName = true;
+    foreach (var file in files)
+    {
+        if (Path.GetFileName(file) == name + extension)
+            isGoodName = false;
+    }
+    if (isGoodName)
+        return name + extension;
+    int i = 0;
+    while (!isGoodName)
+    {
+        i++;
+        isGoodName = true;
+        foreach (var file in files)
+            if (Path.GetFileName(file) == name + i + extension)
+                isGoodName = false;
+    }
+    return name + i + extension;
+}
+static void GetAllFiles(List<string> allFiles, IEnumerable<string> folders, List<string> unused)
+{
+    if (folders.Count() == 0)
+        return;
+    foreach (var folder in folders)
+    {
+        var files = Directory.EnumerateFiles(folder);//קבצים בתיקייה הנוכחית
+        var names = files.Select(x => Path.GetFileName(x)).Except(unused);//שמות קבצים תקינים
+        allFiles.AddRange(files.Where(x => names.Contains(Path.GetFileName(x))));
+        var subFolders = Directory.EnumerateDirectories(folder);//תיקיות בתיקייה הנוכחית
+        var sub = subFolders.Where(x =>
+        subFolders.Select(y => Path.GetFileName(y)).Except(unused)
+        .Contains(Path.GetFileName(x)));
+        GetAllFiles(allFiles, sub, unused);
+    }
+}
+
+code source (relative routing) /** FileBoundle\Program.cs **/
+
+
